@@ -1,0 +1,105 @@
+#!/usr/bin/python2
+'''
+Created by ClusterVision <infonl@clustervision.com>
+This file is part of slurm_health_checker
+https://github.com/clustervision/slurm_health_checker
+This file is part of slurm_health_checker.
+slurm_health_checker is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+slurm_health_checker is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License
+along with slurm_health_checker.  If not, see <http://www.gnu.org/licenses/>.
+'''
+
+import os
+import sys
+import subprocess as sp
+import yaml
+import argparse
+import time
+from multiprocessing import Pool
+import logging
+
+log = logging.getLogger('slurm_health_checker')
+
+class Checker(object):
+    def __init__(self, subj):
+        self.log = logging.getLogger(
+            'Checker PID {}'.format(os.getpid()))
+        self.subj = subj
+
+    def check(self, cond):
+        if self.subj == 'cores':
+            self.log.debug('Checking cores.')
+            pass
+        elif self.subj == 'memtotal':
+            self.log.debug('Checking memtotal.')
+            pass
+        elif self.subj == 'mounts':
+            self.log.debug('Checking mounts.')
+            pass
+        elif self.subj == 'pci':
+            self.log.debug('Checking PCI devices.')
+            pass
+        return True
+
+def checker_worker(elem):
+    log.debug('Checker PID {} with arguments {}'.format(os.getpid(), elem))
+    subj, cond = elem
+    c = Checker(subj)
+    return c.check(cond)
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description="""
+        Check if YML definition of the node matches node configuration
+        """
+    )
+
+    parser.add_argument("--nodedef", "-d", type=str,
+        help="YML file defines node")
+
+    parser.add_argument("--processes", "-p", type=int, default=0,
+        help="Number of proccesses work simultaneously")
+
+    parser.add_argument("--verbose", "-v", action="store_const",
+        dest="loglevel", const=logging.DEBUG, default=logging.INFO,
+        help="Debug output")
+
+    args = parser.parse_args()
+    return args
+
+def main(arguments):
+    # TODO check file permissions
+    log.debug('Open YAML file.')
+    with open(arguments.nodedef, 'r') as stream:
+        try:
+            log.debug('Reading YAML file.')
+            nodedef_dict = yaml.load(stream)
+        except yaml.YAMLError as exc:
+            log.debug('Error occured during reading YAML file.')
+            log.error(exc)
+            return False
+
+    log.debug('Create pool of processes.')
+    process_pool = Pool(processes=arguments.processes or None)
+
+    log.debug('Map check to workers.')
+    workers_return = process_pool.map(
+        checker_worker, nodedef_dict.items())
+
+    log.info(workers_return)
+    return True
+
+if __name__ == "__main__":
+    arguments = parse_arguments()
+
+    logging.basicConfig(level=arguments.loglevel)
+    log = logging.getLogger('slurm_health_checker')
+    sys.exit(not main(arguments))
+

@@ -1,0 +1,9 @@
+cores: 32
+memtotal: 131826956
+mounts:
+  - /boot
+  - /
+pci:
+  - "08:04.0 VGA compatible controller: Matrox Electronics Systems Ltd. MGA G200eW WPCM450 (rev 0a)"
+
+
