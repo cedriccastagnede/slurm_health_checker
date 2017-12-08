@@ -28,24 +28,34 @@ import logging
 log = logging.getLogger('slurm_health_checker')
 
 class Checker(object):
+
     def __init__(self, subj):
+
         self.log = logging.getLogger(
             'Checker PID {}'.format(os.getpid()))
+
+        if "_check_{}".format(subj) not in dir(self):
+            msg = 'No checker to check {} statement'.format(subj)
+            self.log.error(msg)
+            raise RuntimeError, msg
+
+        self.check = eval("self._check_{}".format(subj))
         self.subj = subj
 
-    def check(self, cond):
-        if self.subj == 'cores':
-            self.log.debug('Checking cores.')
-            pass
-        elif self.subj == 'memtotal':
-            self.log.debug('Checking memtotal.')
-            pass
-        elif self.subj == 'mounts':
-            self.log.debug('Checking mounts.')
-            pass
-        elif self.subj == 'pci':
-            self.log.debug('Checking PCI devices.')
-            pass
+    def _check_cores(self, cond):
+        self.log.debug('Cores checker.')
+        return True
+
+    def _check_memtotal(self, cond):
+        self.log.debug('Memtotal checker.')
+        return True
+
+    def _check_mounts(self, cond):
+        self.log.debug('Mounts checker.')
+        return True
+
+    def _check_pci(self, cond):
+        self.log.debug('PCI checker.')
         return True
 
 def checker_worker(elem):
