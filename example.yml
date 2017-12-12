@@ -3,7 +3,9 @@ memtotal: 131826956
 mounts:
   - /boot
   - /
+  - /trinity
 pci:
   - "08:04.0 VGA compatible controller: Matrox Electronics Systems Ltd. MGA G200eW WPCM450 (rev 0a)"
+  - "ff:11.0 .* DDRIO"
 
 
