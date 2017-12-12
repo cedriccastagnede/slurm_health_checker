@@ -22,10 +22,13 @@ import subprocess as sp
 import yaml
 import argparse
 import time
-from multiprocessing import Pool
+import multiprocessing as mp
 import logging
+import re
+import time
 
 log = logging.getLogger('slurm_health_checker')
+
 
 class Checker(object):
 
@@ -44,25 +47,140 @@ class Checker(object):
 
     def _check_cores(self, cond):
         self.log.debug('Cores checker.')
-        return True
+
+        num_cores = len(
+            os.listdir('/sys/class/cpuid')
+        )
+
+        self.log.debug(
+            'Found {} items in /sys/class/cpuid'.format(num_cores))
+
+        status = num_cores == cond
+        self.log.debug('Status of checking cores is {}'.format(status))
+
+        return status
 
     def _check_memtotal(self, cond):
         self.log.debug('Memtotal checker.')
-        return True
+
+        try:
+            with open('/proc/meminfo', 'r') as f:
+                memtotal_line = f.readline()
+                self.log.debug(
+                    'Memtotal line in /proc/meminfo: {}'.format(
+                        memtotal_line.strip()
+                    )
+                )
+
+            memtotal = int(memtotal_line.split()[1])
+        except Exception as exc:
+            self.log.error(exc)
+
+        status = memtotal == cond
+        self.log.debug('Status of checking memtotal is {}'.format(status))
+
+        return status
 
     def _check_mounts(self, cond):
         self.log.debug('Mounts checker.')
-        return True
+        self.log.debug('Create pool of processes.')
+        less_than_ten = lambda x: x if x < 10 else 10
+        process_pool = mp.pool.ThreadPool(
+            processes=less_than_ten(len(cond)))
+
+        self.log.debug('Map mount points to workers.')
+        workers_return = process_pool.map(
+            mount_checker_worker, cond)
+
+        status = reduce(lambda x, y: x & y, workers_return)
+
+        self.log.debug('Status of checking mounts is {}'.format(status))
+
+        return status
 
     def _check_pci(self, cond):
         self.log.debug('PCI checker.')
-        return True
+        cmd = ['lspci']
+        lspci_proc = sp.Popen(cmd, shell=True, stdout=sp.PIPE)
+        lines = []
+        self.log.debug('Fetching lscpi output')
+
+        for line in lspci_proc.communicate():
+            if line:
+                lines = filter(
+                    lambda x: True if x else False,
+                    line.split('\n')
+                )
+
+        # lines in cond could be regexp or str
+        # so compile pattern for every line
+
+        to_match = []
+        matched = []
+
+        for cond_line in cond:
+            pattern = re.compile(str(cond_line))
+            to_match.append((cond_line, pattern))
+
+
+        for line in lines:
+            #self.log.debug('lspci line: {}'.format(line))
+            for cond_line, pattern in to_match:
+                #self.log.debug("Matching {}".format(cond_line))
+                res = (cond_line == line) or bool(re.search(pattern, line))
+                #self.log.debug("Result is {}".format(res))
+                if res:
+                    matched.append((cond_line, res))
+
+        status = len(to_match) == len(matched)
+        return status
+
+
+def mount_checker_worker(mountpoint):
+    cmd = 'stat -t {}'.format(mountpoint)
+    log.debug('Running {}'.format(str(cmd)))
+
+    stat_proc = sp.Popen(
+        cmd, shell=True, stdout=sp.PIPE, stderr=sp.PIPE)
+    timeout = 10
+    i = 0
+    while True:
+        if stat_proc.poll() is None:
+            time.sleep(1)
+        else:
+            break
+        i += 1
+        if i > timeout:
+            stat_proc.kill()
+            log.error('Timeout for mountpoint {}'.format(mountpoint))
+            return False
+
+    stdout, stderr = stat_proc.communicate()
+
+    if stat_proc.returncode != 0:
+        log.error(
+            'Stat for {} returned non-zero code: {}'.format(
+                mountpoint, stat_proc.returncode
+            )
+        )
+        log.error("Stdout for stat {}: {}".format(mountpoint, stdout))
+        log.error("Stderr for stat {}: {}".format(mountpoint, stderr))
+        return False
+
+    log.debug("Stdout for stat {}: {}".format(mountpoint, stdout))
+    log.debug("Stderr for stat {}: {}".format(mountpoint, stderr))
+
+    log.debug('Successfully stat on {}'.format(mountpoint))
+    return True
+
 
 def checker_worker(elem):
     log.debug('Checker PID {} with arguments {}'.format(os.getpid(), elem))
     subj, cond = elem
     c = Checker(subj)
-    return c.check(cond)
+    res = c.check(cond)
+    return res
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -71,7 +189,7 @@ def parse_arguments():
         """
     )
 
-    parser.add_argument("--nodedef", "-d", type=str,
+    parser.add_argument("--nodedef", "-d", type=str, required=True,
         help="YML file defines node")
 
     parser.add_argument("--processes", "-p", type=int, default=0,
@@ -83,6 +201,7 @@ def parse_arguments():
 
     args = parser.parse_args()
     return args
+
 
 def main(arguments):
     # TODO check file permissions
@@ -97,14 +216,14 @@ def main(arguments):
             return False
 
     log.debug('Create pool of processes.')
-    process_pool = Pool(processes=arguments.processes or None)
+    process_pool = mp.Pool(processes=arguments.processes or None)
 
-    log.debug('Map check to workers.')
+    log.debug('Map items to workers.')
     workers_return = process_pool.map(
         checker_worker, nodedef_dict.items())
 
-    log.info(workers_return)
-    return True
+    return reduce(lambda x, y: x & y, workers_return)
+
 
 if __name__ == "__main__":
     arguments = parse_arguments()
