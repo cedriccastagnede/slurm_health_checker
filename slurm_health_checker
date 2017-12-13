@@ -135,14 +135,30 @@ class Checker(object):
         status = len(to_match) == len(matched)
         return status
 
-
-def mount_checker_worker(mountpoint):
+def mount_checker_worker(mountpoint, timeout=10):
     cmd = 'stat -t {}'.format(mountpoint)
     log.debug('Running {}'.format(str(cmd)))
 
+    # check if mounted
+
+    mp_found = False
+    try:
+        with open('/proc/mounts', 'r') as f:
+            for line in f:
+                if line.split()[1] == mountpoint:
+                    mp_found = True
+
+    except Exception as exc:
+        log.error(exc)
+        return False
+    if not mp_found:
+        log.error('{} is not mounted'.format(mountpoint))
+        return False
+
+    # check availability
+
     stat_proc = sp.Popen(
         cmd, shell=True, stdout=sp.PIPE, stderr=sp.PIPE)
-    timeout = 10
     i = 0
     while True:
         if stat_proc.poll() is None:
