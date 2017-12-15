@@ -7,5 +7,10 @@ mounts:
 pci:
   - "08:04.0 VGA compatible controller: Matrox Electronics Systems Ltd. MGA G200eW WPCM450 (rev 0a)"
   - "ff:11.0 .* DDRIO"
-
-
+zabbix:
+  strict: false
+  server: 10.30.30.1
+  user: node_checker
+  password: system
+  node_name: controller1
+  severity: warning
