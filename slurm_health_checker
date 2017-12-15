@@ -26,6 +26,7 @@ import multiprocessing as mp
 import logging
 import re
 import time
+import json, urllib2
 
 log = logging.getLogger('slurm_health_checker')
 
@@ -134,6 +135,144 @@ class Checker(object):
 
         status = len(to_match) == len(matched)
         return status
+
+    def _check_zabbix(self, cond):
+
+        z_server = cond.pop('server')
+        z_user = cond.pop('user')
+        z_pass = cond.pop('password')
+        z_nodename = cond.pop('node_name')
+        strict = bool(cond.pop('strict'))
+
+        severities = {
+            'default': 0, 'information': 1, 'warning': 2,
+            'average': 3, 'high': 4, 'disaster': 5
+        }
+
+        if not 'severity' in cond:
+            return True
+
+        try:
+            severity = cond.pop('severity')
+            severity = severities[severity]
+        except KeyError:
+            self.log.error('No such severity for zabbix check')
+            return not strict
+
+        z_severities = list(range(severity, 6))
+
+        z_url = "http://{}/zabbix/api_jsonrpc.php".format(z_server)
+
+        # get auth token
+        j = {
+            'jsonrpc': '2.0',
+            'method': 'user.login',
+            'auth': None,
+            'id': 1,
+            'params': {
+                'user': z_user,
+                'password': z_pass
+            }
+        }
+
+        r = self._talk2zabbix(z_url, j)
+
+        if not r:
+            self.log.error(
+                'Zabbix API returned wrong answer on user.login: {}'.format(str(r)))
+            return not strict
+
+        if not 'result' in r:
+            self.log.error(
+                'Zabbix API returned no result on user.login: {}'.format(str(r)))
+            return not strict
+
+        z_token = str(r.pop('result'))
+
+
+        # get zabbix hostid
+        j = {
+            "jsonrpc": "2.0",
+            "method": "host.get",
+            "auth": z_token,
+            "id": 2,
+            "params": {
+                "filter": {
+                    "host": [
+                        z_nodename,
+                    ]
+                }
+            }
+        }
+        r = self._talk2zabbix(z_url, j)
+
+        if not r:
+            self.log.error(
+                'Zabbix API returned wrong answer on host.get: {}'.format(str(r)))
+            return not strict
+
+        if not 'result' in r:
+            self.log.error(
+                'Zabbix API returned no result on host.get: {}'.format(str(r)))
+            return not strict
+
+        try:
+            z_hostid = r.pop('result')[0]['hostid']
+        except (KeyError,IndexError):
+            self.log.error(
+                'Unable to get hostid for {} in zabbix'.format(z_nodename))
+            return not strict
+
+        # get events
+        j = {
+            'jsonrpc': '2.0',
+            'method': 'problem.get',
+            'auth': z_token,
+            'id': 3,
+            'params': {
+                'hostids': z_hostid,
+                'severities': z_severities,
+                'output': 'extend',
+                'sortfield': ['eventid'],
+                'sortorder': 'DESC',
+            },
+        }
+        r = self._talk2zabbix(z_url, j)
+
+        if not r:
+            self.log.error(
+                'Zabbix API returned wrong answer on problem.get: {}'.format(str(r)))
+            return not strict
+
+        if not 'result' in r:
+            self.log.error(
+                'Zabbix API returned no result on problem.get: {}'.format(str(r)))
+            return not strict
+
+        n_problems = len(r['result'])
+        if n_problems > 0:
+            self.log.error(
+                ('One or more problems ({}) are associated with this host in Zabbix'
+                .format(n_problems))
+            )
+            return False
+
+        return True
+
+
+    def _talk2zabbix(self, url, j):
+        try:
+            self.log.debug('Talking to zabbix API')
+            req = urllib2.Request(url)
+            req.add_header('Content-Type', 'application/json')
+            r = next(urllib2.urlopen(req, json.dumps(j)))
+            r = json.loads(r)
+        except Exception as exc:
+            log.error(exc)
+            return False
+        return r
+
+
 
 def mount_checker_worker(mountpoint, timeout=10):
     cmd = 'stat -t {}'.format(mountpoint)
