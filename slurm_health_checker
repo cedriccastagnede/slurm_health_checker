@@ -142,6 +142,14 @@ class Checker(object):
         z_user = cond.pop('user')
         z_pass = cond.pop('password')
         z_nodename = cond.pop('node_name')
+        if z_nodename[:8] == 'HOSTNAME':
+            z_suffix = z_nodename[8:]
+            z_nodename = os.uname()[1] + z_suffix
+            self.log.debug(
+                'Placeholder for hostname is found. ' +
+                '"{}" will be used'.format(z_nodename)
+            )
+
         strict = bool(cond.pop('strict'))
 
         severities = {
