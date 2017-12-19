@@ -25,8 +25,8 @@ import time
 import multiprocessing as mp
 import logging
 import re
-import time
-import json, urllib2
+import json
+import urllib2
 
 log = logging.getLogger('slurm_health_checker')
 
@@ -41,7 +41,7 @@ class Checker(object):
         if "_check_{}".format(subj) not in dir(self):
             msg = 'No checker to check {} statement'.format(subj)
             self.log.error(msg)
-            raise RuntimeError, msg
+            raise RuntimeError(msg)
 
         self.check = eval("self._check_{}".format(subj))
         self.subj = subj
@@ -123,7 +123,6 @@ class Checker(object):
             pattern = re.compile(str(cond_line))
             to_match.append((cond_line, pattern))
 
-
         for line in lines:
             #self.log.debug('lspci line: {}'.format(line))
             for cond_line, pattern in to_match:
@@ -187,16 +186,17 @@ class Checker(object):
 
         if not r:
             self.log.error(
-                'Zabbix API returned wrong answer on user.login: {}'.format(str(r)))
+                'Zabbix API returned wrong answer on ' +
+                'user.login: {}'.format(str(r)))
             return not strict
 
         if not 'result' in r:
             self.log.error(
-                'Zabbix API returned no result on user.login: {}'.format(str(r)))
+                'Zabbix API returned no result on ' +
+                'user.login: {}'.format(str(r)))
             return not strict
 
         z_token = str(r.pop('result'))
-
 
         # get zabbix hostid
         j = {
@@ -216,17 +216,19 @@ class Checker(object):
 
         if not r:
             self.log.error(
-                'Zabbix API returned wrong answer on host.get: {}'.format(str(r)))
+                'Zabbix API returned wrong answer on ' +
+                'host.get: {}'.format(str(r)))
             return not strict
 
         if not 'result' in r:
             self.log.error(
-                'Zabbix API returned no result on host.get: {}'.format(str(r)))
+                'Zabbix API returned no result on ' +
+                'host.get: {}'.format(str(r)))
             return not strict
 
         try:
             z_hostid = r.pop('result')[0]['hostid']
-        except (KeyError,IndexError):
+        except (KeyError, IndexError):
             self.log.error(
                 'Unable to get hostid for {} in zabbix'.format(z_nodename))
             return not strict
@@ -249,24 +251,25 @@ class Checker(object):
 
         if not r:
             self.log.error(
-                'Zabbix API returned wrong answer on problem.get: {}'.format(str(r)))
+                'Zabbix API returned wrong answer on ' +
+                'problem.get: {}'.format(str(r)))
             return not strict
 
         if not 'result' in r:
             self.log.error(
-                'Zabbix API returned no result on problem.get: {}'.format(str(r)))
+                'Zabbix API returned no result on ' +
+                'problem.get: {}'.format(str(r)))
             return not strict
 
         n_problems = len(r['result'])
         if n_problems > 0:
             self.log.error(
-                ('One or more problems ({}) are associated with this host in Zabbix'
-                .format(n_problems))
+                'One or more problems ({})'.format(n_problems) +
+                'are associated with this host in Zabbix'
             )
             return False
 
         return True
-
 
     def _talk2zabbix(self, url, j):
         try:
@@ -279,7 +282,6 @@ class Checker(object):
             log.error(exc)
             return False
         return r
-
 
 
 def mount_checker_worker(mountpoint, timeout=10):
@@ -352,13 +354,16 @@ def parse_arguments():
         """
     )
 
-    parser.add_argument("--nodedef", "-d", type=str, required=True,
+    parser.add_argument(
+        "--nodedef", "-d", type=str, required=True,
         help="YML file defines node")
 
-    parser.add_argument("--processes", "-p", type=int, default=0,
+    parser.add_argument(
+        "--processes", "-p", type=int, default=0,
         help="Number of proccesses work simultaneously")
 
-    parser.add_argument("--verbose", "-v", action="store_const",
+    parser.add_argument(
+        "--verbose", "-v", action="store_const",
         dest="loglevel", const=logging.DEBUG, default=logging.INFO,
         help="Debug output")
 
@@ -394,4 +399,3 @@ if __name__ == "__main__":
     logging.basicConfig(level=arguments.loglevel)
     log = logging.getLogger('slurm_health_checker')
     sys.exit(not main(arguments))
-
