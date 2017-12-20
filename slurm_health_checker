@@ -404,7 +404,7 @@ def parse_arguments():
 
     parser.add_argument(
         "--nodedef", "-d", type=str, required=False,
-        default='/etc/slurm_health_checker.yml'
+        default='/etc/slurm_health_checker.yml',
         help="YML file defines node")
 
     parser.add_argument(
@@ -415,6 +415,10 @@ def parse_arguments():
         "--verbose", "-v", action="store_const",
         dest="loglevel", const=logging.DEBUG, default=logging.INFO,
         help="Debug output")
+
+    parser.add_argument(
+        "--dry_run", action="store_true", default=False,
+        help="Do not drain/un-drain node")
 
     args = parser.parse_args()
     return args
@@ -486,7 +490,9 @@ class SlurmDrainer(object):
 
         self.log.debug("Checker result: {}".format(str(checkers_result)))
 
-        return self.drain_node(checkers_result, options)
+        return self.drain_node(
+            checkers_result, options, dryrun=self.arguments.dry_run
+        )
 
     def _run_cmd(self, cmd):
         proc = sp.Popen(
@@ -561,7 +567,7 @@ class SlurmDrainer(object):
 
         return True
 
-    def drain_node(self, status, options):
+    def drain_node(self, status, options, dryrun):
         healthy = status[0]
         reason = "{}: {}".format(self.tag, status[1])
 
@@ -579,6 +585,9 @@ class SlurmDrainer(object):
 
         elif self.drained and healthy:
             self.log.debug('Node will be un-drained')
+            if dryrun:
+                self.log.info('Dry_run is specified. Doing nothing.')
+                return True
             cmd = 'scontrol update NodeName={} State=UNDRAIN'.format(
                 self.short_hostname
             )
@@ -594,6 +603,9 @@ class SlurmDrainer(object):
 
         elif not self.drained and not healthy:
             self.log.debug('Node will be drained')
+            if dryrun:
+                self.log.info('Dry_run is specified. Doing nothing.')
+                return True
             cmd = 'scontrol update NodeName={} State=DRAIN Reason="{}"'.format(
                 self.short_hostname, reason
             )
