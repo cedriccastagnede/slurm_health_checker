@@ -449,8 +449,11 @@ class SlurmDrainer(object):
         return (bool_part, string_part)
 
     def main(self):
-        # TODO check file permissions
         self.log.debug('Open YAML file.')
+
+        if not os.path.isfile(self.arguments.nodedef):
+            self.log.error('No such file {}'.format(self.arguments.nodedef))
+            return False
 
         with open(self.arguments.nodedef, 'r') as stream:
             try:
