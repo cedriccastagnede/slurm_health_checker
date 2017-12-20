@@ -403,7 +403,8 @@ def parse_arguments():
     )
 
     parser.add_argument(
-        "--nodedef", "-d", type=str, required=True,
+        "--nodedef", "-d", type=str, required=False,
+        default='/etc/slurm_health_checker.yml'
         help="YML file defines node")
 
     parser.add_argument(
