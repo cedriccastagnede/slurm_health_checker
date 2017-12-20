@@ -41,10 +41,14 @@ class Checker(object):
         if "_check_{}".format(subj) not in dir(self):
             msg = 'No checker to check {} statement'.format(subj)
             self.log.error(msg)
-            raise RuntimeError(msg)
+            self.check = self._empty_check
+            self.subj = None
+        else:
+            self.check = eval("self._check_{}".format(subj))
+            self.subj = subj
 
-        self.check = eval("self._check_{}".format(subj))
-        self.subj = subj
+    def _empty_check(self, cond):
+        return (True, '')
 
     def _check_cores(self, cond):
         self.log.debug('Cores checker.')
@@ -58,8 +62,13 @@ class Checker(object):
 
         status = num_cores == cond
         self.log.debug('Status of checking cores is {}'.format(status))
-
-        return status
+        msg = ''
+        if not status:
+            msg = (
+                'Wrong number of cores: ' +
+                'expecting - {}, found - {}'.format(cond, num_cores)
+            )
+        return (status, msg)
 
     def _check_memtotal(self, cond):
         self.log.debug('Memtotal checker.')
@@ -76,13 +85,30 @@ class Checker(object):
             memtotal = int(memtotal_line.split()[1])
         except Exception as exc:
             self.log.error(exc)
+            msg = 'Exeption in _check_memtotal'
+            return (False, msg)
 
         status = memtotal == cond
         self.log.debug('Status of checking memtotal is {}'.format(status))
+        msg = ''
 
-        return status
+        if not status:
+            msg = (
+                'Wrong amount of memory: ' +
+                'expecting - {}, found - {}'.format(cond, memtotal)
+            )
+
+        return (status, msg)
 
     def _check_mounts(self, cond):
+        def reduce_outputs(o1, o2):
+            bool_part = o1[0] & o2[0]
+            if o1[1]:
+                string_part = o1[1] + '; ' + o2[1]
+            else:
+                string_part = o2[1]
+            return (bool_part, string_part)
+
         self.log.debug('Mounts checker.')
         self.log.debug('Create pool of processes.')
         less_than_ten = lambda x: x if x < 10 else 10
@@ -91,11 +117,15 @@ class Checker(object):
 
         self.log.debug('Map mount points to workers.')
         workers_return = process_pool.map(
-            mount_checker_worker, cond)
+            self.mount_checker_worker, cond)
 
-        status = reduce(lambda x, y: x & y, workers_return)
+        status = reduce(reduce_outputs, workers_return)
 
-        self.log.debug('Status of checking mounts is {}'.format(status))
+        self.log.debug(
+            'Status of checking mounts ' +
+            'is: {} and messages are: {}'.format(
+                status[0], status[1] or '""')
+        )
 
         return status
 
@@ -133,7 +163,10 @@ class Checker(object):
                     matched.append((cond_line, res))
 
         status = len(to_match) == len(matched)
-        return status
+        msg = ''
+        if not status:
+            msg = 'PCI check failed'
+        return (status, msg)
 
     def _check_zabbix(self, cond):
 
@@ -141,6 +174,10 @@ class Checker(object):
         z_user = cond.pop('user')
         z_pass = cond.pop('password')
         z_nodename = cond.pop('node_name')
+        if 'timeout' in cond:
+            timeout = cond.pop('timeout')
+        else:
+            timeout = 5
         if z_nodename[:8] == 'HOSTNAME':
             z_suffix = z_nodename[8:]
             z_nodename = os.uname()[1] + z_suffix
@@ -157,14 +194,18 @@ class Checker(object):
         }
 
         if not 'severity' in cond:
-            return True
+            self.log.info(
+                'Severity is not defined for zabbix check. ' +
+                'Ignorinig this check')
+            return (True, '')
 
         try:
             severity = cond.pop('severity')
             severity = severities[severity]
         except KeyError:
-            self.log.error('No such severity for zabbix check')
-            return not strict
+            msg = 'No such severity for zabbix check'
+            self.log.error(msg)
+            return (not strict, msg)
 
         z_severities = list(range(severity, 6))
 
@@ -182,19 +223,23 @@ class Checker(object):
             }
         }
 
-        r = self._talk2zabbix(z_url, j)
+        r = self._talk2zabbix(z_url, j, timeout)
 
         if not r:
-            self.log.error(
+            msg = (
                 'Zabbix API returned wrong answer on ' +
-                'user.login: {}'.format(str(r)))
-            return not strict
+                'user.login: {}'.format(str(r))
+            )
+            self.log.error(msg)
+            return (not strict, msg)
 
         if not 'result' in r:
-            self.log.error(
+            msg = (
                 'Zabbix API returned no result on ' +
-                'user.login: {}'.format(str(r)))
-            return not strict
+                'user.login: {}'.format(str(r))
+            )
+            self.log.error(msg)
+            return (not strict, msg)
 
         z_token = str(r.pop('result'))
 
@@ -212,26 +257,30 @@ class Checker(object):
                 }
             }
         }
-        r = self._talk2zabbix(z_url, j)
+        r = self._talk2zabbix(z_url, j, timeout)
 
         if not r:
-            self.log.error(
+            msg = (
                 'Zabbix API returned wrong answer on ' +
-                'host.get: {}'.format(str(r)))
-            return not strict
+                'host.get: {}'.format(str(r))
+            )
+            self.log.error(msg)
+            return (not strict, msg)
 
         if not 'result' in r:
-            self.log.error(
+            msg = (
                 'Zabbix API returned no result on ' +
-                'host.get: {}'.format(str(r)))
-            return not strict
+                'host.get: {}'.format(str(r))
+            )
+            self.log.error(msg)
+            return (not strict, msg)
 
         try:
             z_hostid = r.pop('result')[0]['hostid']
         except (KeyError, IndexError):
-            self.log.error(
-                'Unable to get hostid for {} in zabbix'.format(z_nodename))
-            return not strict
+            msg = 'Unable to get hostid for {} in zabbix'.format(z_nodename)
+            self.log.error(msg)
+            return (not strict, msg)
 
         # get events
         j = {
@@ -247,104 +296,103 @@ class Checker(object):
                 'sortorder': 'DESC',
             },
         }
-        r = self._talk2zabbix(z_url, j)
+        r = self._talk2zabbix(z_url, j, timeout)
 
         if not r:
-            self.log.error(
+            msg = (
                 'Zabbix API returned wrong answer on ' +
-                'problem.get: {}'.format(str(r)))
-            return not strict
+                'problem.get: {}'.format(str(r))
+            )
+            self.log.error(msg)
+            return (not strict, msg)
 
         if not 'result' in r:
-            self.log.error(
+            msg = (
                 'Zabbix API returned no result on ' +
-                'problem.get: {}'.format(str(r)))
-            return not strict
+                'problem.get: {}'.format(str(r))
+            )
+            self.log.error(msg)
+            return (not strict, msg)
 
         n_problems = len(r['result'])
         if n_problems > 0:
-            self.log.error(
+            msg = (
                 'One or more problems ({})'.format(n_problems) +
                 'are associated with this host in Zabbix'
             )
-            return False
+            self.log.error(msg)
+            return (False, msg)
 
-        return True
+        return (True, '')
 
-    def _talk2zabbix(self, url, j):
+    def _talk2zabbix(self, url, j, timeout):
         try:
             self.log.debug('Talking to zabbix API')
             req = urllib2.Request(url)
             req.add_header('Content-Type', 'application/json')
-            r = next(urllib2.urlopen(req, json.dumps(j)))
+            r = next(urllib2.urlopen(req, json.dumps(j), timeout=timeout))
             r = json.loads(r)
         except Exception as exc:
-            log.error(exc)
+            self.log.error(exc)
             return False
         return r
 
+    def mount_checker_worker(self, mountpoint, timeout=10):
+        cmd = 'stat -t {}'.format(mountpoint)
+        self.log.debug('Running {}'.format(str(cmd)))
 
-def mount_checker_worker(mountpoint, timeout=10):
-    cmd = 'stat -t {}'.format(mountpoint)
-    log.debug('Running {}'.format(str(cmd)))
+        # check if mounted
 
-    # check if mounted
+        mp_found = False
+        try:
+            with open('/proc/mounts', 'r') as f:
+                for line in f:
+                    if line.split()[1] == mountpoint:
+                        mp_found = True
 
-    mp_found = False
-    try:
-        with open('/proc/mounts', 'r') as f:
-            for line in f:
-                if line.split()[1] == mountpoint:
-                    mp_found = True
+        except Exception as exc:
+            self.log.error(exc)
+            msg = 'Exception during checking {}'.format(mountpoint)
+            return (False, msg)
 
-    except Exception as exc:
-        log.error(exc)
-        return False
-    if not mp_found:
-        log.error('{} is not mounted'.format(mountpoint))
-        return False
+        if not mp_found:
+            msg = '{} is not mounted'.format(mountpoint)
+            self.log.error(msg)
+            return (False, msg)
 
-    # check availability
+        # check availability
 
-    stat_proc = sp.Popen(
-        cmd, shell=True, stdout=sp.PIPE, stderr=sp.PIPE)
-    i = 0
-    while True:
-        if stat_proc.poll() is None:
-            time.sleep(1)
-        else:
-            break
-        i += 1
-        if i > timeout:
-            stat_proc.kill()
-            log.error('Timeout for mountpoint {}'.format(mountpoint))
-            return False
+        stat_proc = sp.Popen(
+            cmd, shell=True, stdout=sp.PIPE, stderr=sp.PIPE)
+        i = 0
+        while True:
+            if stat_proc.poll() is None:
+                time.sleep(1)
+            else:
+                break
+            i += 1
+            if i > timeout:
+                stat_proc.kill()
+                msg = 'Timeout for mountpoint {}'.format(mountpoint)
+                self.log.error(msg)
+                return (False, msg)
 
-    stdout, stderr = stat_proc.communicate()
+        stdout, stderr = stat_proc.communicate()
 
-    if stat_proc.returncode != 0:
-        log.error(
-            'Stat for {} returned non-zero code: {}'.format(
+        if stat_proc.returncode != 0:
+            msg = 'Stat for {} returned non-zero code: {}'.format(
                 mountpoint, stat_proc.returncode
             )
-        )
-        log.error("Stdout for stat {}: {}".format(mountpoint, stdout))
-        log.error("Stderr for stat {}: {}".format(mountpoint, stderr))
-        return False
+            self.log.error(msg)
+            self.log.error("Stdout for stat {}: {}".format(mountpoint, stdout))
+            self.log.error("Stderr for stat {}: {}".format(mountpoint, stderr))
+            return (False, msg)
 
-    log.debug("Stdout for stat {}: {}".format(mountpoint, stdout))
-    log.debug("Stderr for stat {}: {}".format(mountpoint, stderr))
+        self.log.debug("Stdout for stat {}: {}".format(mountpoint, stdout))
+        self.log.debug("Stderr for stat {}: {}".format(mountpoint, stderr))
 
-    log.debug('Successfully stat on {}'.format(mountpoint))
-    return True
-
-
-def checker_worker(elem):
-    log.debug('Checker PID {} with arguments {}'.format(os.getpid(), elem))
-    subj, cond = elem
-    c = Checker(subj)
-    res = c.check(cond)
-    return res
+        self.log.debug('Successfully stat on {}'.format(mountpoint))
+        return (True, '')
 
 
 def parse_arguments():
@@ -371,31 +419,207 @@ def parse_arguments():
     return args
 
 
-def main(arguments):
-    # TODO check file permissions
-    log.debug('Open YAML file.')
-    with open(arguments.nodedef, 'r') as stream:
-        try:
-            log.debug('Reading YAML file.')
-            nodedef_dict = yaml.load(stream)
-        except yaml.YAMLError as exc:
-            log.debug('Error occured during reading YAML file.')
-            log.error(exc)
+class SlurmDrainer(object):
+
+    def __init__(self, arguments, logger):
+        self.arguments = arguments
+        self.log = logger
+        self.drained = None
+
+    def _reduce_tuple_statuses(self, o1, o2):
+        # ignore error s is check went succesfully
+        b1, s1 = o1
+        b2, s2 = o2
+
+        if b1:
+            s1 = ''
+        if b2:
+            s2 = ''
+        if s2 and s1:
+            s1 = s1 + ' | '
+
+        bool_part = b1 & b2
+        string_part = s1 + s2
+
+        return (bool_part, string_part)
+
+    def main(self):
+        # TODO check file permissions
+        self.log.debug('Open YAML file.')
+
+        with open(self.arguments.nodedef, 'r') as stream:
+            try:
+                self.log.debug('Reading YAML file.')
+                nodedef_dict = yaml.load(stream)
+            except yaml.YAMLError as exc:
+                self.log.debug('Error occured during reading YAML file.')
+                self.log.error(exc)
+                return False
+
+        if nodedef_dict is None or 'options' not in nodedef_dict:
+            options = {}
+        else:
+            options = nodedef_dict.pop('options')
+
+        if 'hostname' not in options:
+            self.short_hostname = os.uname()[1].split('.')[0]
+        else:
+            self.short_hostname = options['hostname']
+
+        if 'tag' not in options:
+            self.tag = 'slurm_health_checker'
+        else:
+            self.tag = options['tag']
+
+        if not self.is_checkable(options):
+            return True
+
+        self.log.debug('Create pool of processes.')
+        process_pool = mp.Pool(processes=arguments.processes or None)
+
+        self.log.debug('Map items to workers.')
+        workers_return = process_pool.map(
+            checker_worker, nodedef_dict.items())
+
+        checkers_result = reduce(self._reduce_tuple_statuses, workers_return)
+
+        self.log.debug("Checker result: {}".format(str(checkers_result)))
+
+        return self.drain_node(checkers_result, options)
+
+    def _run_cmd(self, cmd):
+        proc = sp.Popen(
+            cmd, shell=True,
+            stdout=sp.PIPE, stderr=sp.PIPE
+        )
+        stdout, stderr = proc.communicate()
+        proc.wait()
+        ret = proc.returncode
+
+        stdout_lines = []
+        stdout_lines = filter(
+            lambda x: True if x else False,
+            stdout.split('\n')
+        )
+
+        return stdout_lines, stdout, stderr, ret
+
+    def is_checkable(self, options):
+
+        self.drained = False
+
+        self.log.debug('Check if node is online')
+        sinfo_cmd = 'sinfo -n {} -h -o %T -r'.format(self.short_hostname)
+
+        sinfo_lines, sinfo_stdout, sinfo_stderr, ret = self._run_cmd(sinfo_cmd)
+
+        if ret != 0:
+            msg = 'Sinfo failed'
+            self.log.error(msg)
+            self.log.error("STDERR: " + sinfo_stderr)
+            self.log.error("STDOUT: " + sinfo_stdout)
             return False
 
-    log.debug('Create pool of processes.')
-    process_pool = mp.Pool(processes=arguments.processes or None)
+        if len(sinfo_lines) == 0:
+            self.log.debug('Node is offline')
+            return False
 
-    log.debug('Map items to workers.')
-    workers_return = process_pool.map(
-        checker_worker, nodedef_dict.items())
+        if len(sinfo_lines) > 1:
+            self.log.error('Sinfo retuned several statuses for the node')
+            return False
 
-    return reduce(lambda x, y: x & y, workers_return)
+        self.node_status = sinfo_lines[0]
 
+        if self.node_status != 'drained':
+            self.log.debug('Node is online and not drained')
+            return True
+
+        self.log.debug('Check if node is draned by this script')
+
+        if self.short_hostname is None:
+            self.log.error('Unable to find hostname for node')
+            return False
+
+        sinfo_cmd = 'sinfo -n {} -h -o %E -r'.format(self.short_hostname)
+        sinfo_lines, sinfo_stdout, sinfo_stderr, ret = self._run_cmd(sinfo_cmd)
+
+        if ret != 0:
+            msg = 'Sinfo failed'
+            self.log.error(msg)
+            self.log.error("STDERR: " + sinfo_stderr)
+            self.log.error("STDOUT: " + sinfo_stdout)
+            return False
+
+        reason = sinfo_lines[0]
+
+        if reason[:len(self.tag)] != self.tag:
+            self.log.info('Node is drained but not by this script. Stopping.')
+            return False
+
+        self.drained = True
+
+        return True
+
+    def drain_node(self, status, options):
+        healthy = status[0]
+        reason = "{}: {}".format(self.tag, status[1])
+
+        if self.drained is None:
+            self.log.error('Drain status is unknown. Exit.')
+            return True
+
+        if not self.drained and healthy:
+            self.log.debug('Node is OK, doing nothing.')
+            return True
+
+        elif self.drained and not healthy:
+            self.log.debug('Node is already drained')
+            return True
+
+        elif self.drained and healthy:
+            self.log.debug('Node will be un-drained')
+            cmd = 'scontrol update NodeName={} State=UNDRAIN'.format(
+                self.short_hostname
+            )
+            lines, stdout, stderr, ret = self._run_cmd(cmd)
+            if ret != 0:
+                msg = 'Scontrol failed'
+                self.log.error(msg)
+                self.log.error("STDERR: " + stderr)
+                self.log.error("STDOUT: " + stdout)
+                return False
+            self.log.info('Node is un-drained')
+            return True
+
+        elif not self.drained and not healthy:
+            self.log.debug('Node will be drained')
+            cmd = 'scontrol update NodeName={} State=DRAIN Reason="{}"'.format(
+                self.short_hostname, reason
+            )
+            lines, stdout, stderr, ret = self._run_cmd(cmd)
+            if ret != 0:
+                msg = 'Scontrol failed'
+                self.log.error(msg)
+                self.log.error("STDERR: " + stderr)
+                self.log.error("STDOUT: " + stdout)
+                return False
+            self.log.info('Node is drained')
+            return True
+
+        return True
+
+
+def checker_worker(elem):
+    log.debug('Checker PID {} with arguments {}'.format(os.getpid(), elem))
+    subj, cond = elem
+    c = Checker(subj)
+    res = c.check(cond)
+    return res
 
 if __name__ == "__main__":
     arguments = parse_arguments()
 
     logging.basicConfig(level=arguments.loglevel)
     log = logging.getLogger('slurm_health_checker')
-    sys.exit(not main(arguments))
+    sd = SlurmDrainer(arguments, log)
+    sys.exit(not sd.main())
