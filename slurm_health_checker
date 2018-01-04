@@ -100,14 +100,15 @@ class Checker(object):
 
         return (status, msg)
 
+    def reduce_outputs(self, o1, o2):
+        bool_part = o1[0] & o2[0]
+        if o1[1]:
+            string_part = o1[1] + '; ' + o2[1]
+        else:
+            string_part = o2[1]
+        return (bool_part, string_part)
+
     def _check_mounts(self, cond):
-        def reduce_outputs(o1, o2):
-            bool_part = o1[0] & o2[0]
-            if o1[1]:
-                string_part = o1[1] + '; ' + o2[1]
-            else:
-                string_part = o2[1]
-            return (bool_part, string_part)
 
         self.log.debug('Mounts checker.')
         self.log.debug('Create pool of processes.')
@@ -119,7 +120,7 @@ class Checker(object):
         workers_return = process_pool.map(
             self.mount_checker_worker, cond)
 
-        status = reduce(reduce_outputs, workers_return)
+        status = reduce(self.reduce_outputs, workers_return)
 
         self.log.debug(
             'Status of checking mounts ' +
@@ -167,6 +168,28 @@ class Checker(object):
         if not status:
             msg = 'PCI check failed'
         return (status, msg)
+
+    def _check_shell(self, cond):
+
+        self.log.debug('Shell checker.')
+        self.log.debug('Create pool of processes.')
+        less_than_ten = lambda x: x if x < 10 else 10
+        process_pool = mp.pool.ThreadPool(
+            processes=less_than_ten(len(cond)))
+
+        self.log.debug('Shell commands to workers.')
+        workers_return = process_pool.map(
+            self.shell_checker_worker, cond)
+
+        status = reduce(self.reduce_outputs, workers_return)
+
+        self.log.debug(
+            'Status of checking mounts ' +
+            'is: {} and messages are: {}'.format(
+                status[0], status[1] or '""')
+        )
+
+        return status
 
     def _check_zabbix(self, cond):
 
@@ -336,6 +359,37 @@ class Checker(object):
             self.log.error(exc)
             return False
         return r
+
+    def shell_checker_worker(self, cmd, timeout=10):
+        self.log.debug('Running {}'.format(str(cmd)))
+
+        shell_proc = sp.Popen(
+            cmd, shell=True, stdout=sp.PIPE, stderr=sp.PIPE)
+        i = 0
+        while True:
+            if shell_proc.poll() is None:
+                time.sleep(1)
+            else:
+                break
+            i += 1
+            if i > timeout:
+                shell_proc.kill()
+                msg = 'Timeout for cmd "{}"'.format(cmd)
+                self.log.error(msg)
+                return (False, msg)
+
+        stdout, stderr = shell_proc.communicate()
+
+        if shell_proc.returncode != 0:
+            msg = '"{}" returned non-zero code: {}'.format(
+                cmd, shell_proc.returncode
+            )
+            self.log.error(msg)
+            self.log.error('Stdout for "{}": {}'.format(cmd, stdout))
+            self.log.error('Stderr for "{}": {}'.format(cmd, stderr))
+            return (False, msg)
+
+        return (True, '')
 
     def mount_checker_worker(self, mountpoint, timeout=10):
         cmd = 'stat -t {}'.format(mountpoint)
@@ -540,7 +594,7 @@ class SlurmDrainer(object):
 
         self.node_status = sinfo_lines[0]
 
-        if self.node_status != 'drained':
+        if self.node_status not in  ['drained', 'draining']:
             self.log.debug('Node is online and not drained')
             return True
 
@@ -572,7 +626,14 @@ class SlurmDrainer(object):
 
     def drain_node(self, status, options, dryrun):
         healthy = status[0]
-        reason = "{}: {}".format(self.tag, status[1])
+        reason = "{}: {}".format(
+            self.tag,
+            re.sub(
+                '["`$]',
+                lambda x: '\\' + x.group(0),
+                status[1]
+            )
+        )
 
         if self.drained is None:
             self.log.error('Drain status is unknown. Exit.')
@@ -594,6 +655,7 @@ class SlurmDrainer(object):
             cmd = 'scontrol update NodeName={} State=UNDRAIN'.format(
                 self.short_hostname
             )
+            self.log.debug('scontrol cmd: "{}"'.format(cmd))
             lines, stdout, stderr, ret = self._run_cmd(cmd)
             if ret != 0:
                 msg = 'Scontrol failed'
@@ -612,6 +674,7 @@ class SlurmDrainer(object):
             cmd = 'scontrol update NodeName={} State=DRAIN Reason="{}"'.format(
                 self.short_hostname, reason
             )
+            self.log.debug('scontrol cmd: "{}"'.format(cmd))
             lines, stdout, stderr, ret = self._run_cmd(cmd)
             if ret != 0:
                 msg = 'Scontrol failed'

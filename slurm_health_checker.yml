@@ -16,3 +16,5 @@ mounts:
 #  password: system
 #  node_name: HOSTNAME.cluster
 #  severity: warning
+#shell:
+#  - "opainfo | awk '$1=="PortState:"{if ($2!="Active") {exit 1}}'"
