@@ -132,7 +132,7 @@ class Checker(object):
 
     def _check_pci(self, cond):
         self.log.debug('PCI checker.')
-        cmd = ['lspci']
+        cmd = ['/usr/sbin/lspci']
         lspci_proc = sp.Popen(cmd, shell=True, stdout=sp.PIPE)
         lines = []
         self.log.debug('Fetching lscpi output')
@@ -392,7 +392,7 @@ class Checker(object):
         return (True, '')
 
     def mount_checker_worker(self, mountpoint, timeout=10):
-        cmd = 'stat -t {}'.format(mountpoint)
+        cmd = '/usr/bin/stat -t {}'.format(mountpoint)
         self.log.debug('Running {}'.format(str(cmd)))
 
         # check if mounted
@@ -573,7 +573,7 @@ class SlurmDrainer(object):
         self.drained = False
 
         self.log.debug('Check if node is online')
-        sinfo_cmd = 'sinfo -n {} -h -o %T -r'.format(self.short_hostname)
+        sinfo_cmd = '/usr/bin/sinfo -n {} -h -o %T -r'.format(self.short_hostname)
 
         sinfo_lines, sinfo_stdout, sinfo_stderr, ret = self._run_cmd(sinfo_cmd)
 
@@ -604,7 +604,7 @@ class SlurmDrainer(object):
             self.log.error('Unable to find hostname for node')
             return False
 
-        sinfo_cmd = 'sinfo -n {} -h -o %E -r'.format(self.short_hostname)
+        sinfo_cmd = '/usr/bin/sinfo -n {} -h -o %E -r'.format(self.short_hostname)
         sinfo_lines, sinfo_stdout, sinfo_stderr, ret = self._run_cmd(sinfo_cmd)
 
         if ret != 0:
@@ -652,7 +652,7 @@ class SlurmDrainer(object):
             if dryrun:
                 self.log.info('Dry_run is specified. Doing nothing.')
                 return True
-            cmd = 'scontrol update NodeName={} State=UNDRAIN'.format(
+            cmd = '/usr/bin/scontrol update NodeName={} State=UNDRAIN'.format(
                 self.short_hostname
             )
             self.log.debug('scontrol cmd: "{}"'.format(cmd))
@@ -671,7 +671,7 @@ class SlurmDrainer(object):
             if dryrun:
                 self.log.info('Dry_run is specified. Doing nothing.')
                 return True
-            cmd = 'scontrol update NodeName={} State=DRAIN Reason="{}"'.format(
+            cmd = '/usr/bin/scontrol update NodeName={} State=DRAIN Reason="{}"'.format(
                 self.short_hostname, reason
             )
             self.log.debug('scontrol cmd: "{}"'.format(cmd))
